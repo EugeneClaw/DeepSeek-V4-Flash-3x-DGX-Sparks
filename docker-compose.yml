@@ -1,0 +1,202 @@
+services:
+  vllm-dspark:
+    image: ${DSPARK_VLLM_IMAGE:-dspark-vllm-gx10:0.1.1-cutlass-ep}
+    pull_policy: if_not_present
+    entrypoint: []
+    network_mode: host
+    ipc: host
+    shm_size: "64gb"
+    restart: ${DSPARK_RESTART_POLICY:-no}
+    stop_grace_period: ${DSPARK_STOP_GRACE:-10s}
+
+    ulimits:
+      memlock: -1
+      stack: 67108864
+
+    gpus: all
+
+    devices:
+      - /dev/infiniband:/dev/infiniband
+
+    volumes:
+      - ${HF_CACHE:-${HOME}/.cache/huggingface}:/cache/huggingface
+      - ${DSPARK_PATCHES_DIR:-./patches}:/opt/dspark-patches:ro
+      - ${DSPARK_TMP_HOST:-${HOME}/.cache/dspark-tmp}:/tmp
+      - ${NCCL_MESH_PLUGIN_DIR:-./nccl-mesh}:/opt/nccl-mesh:ro
+      - ${TP_PAD_ROOT:-./overlay}/vllm/models/deepseek_v4/tp_pad.py:/usr/local/lib/python3.12/dist-packages/vllm/models/deepseek_v4/tp_pad.py:ro
+      - ${TP_PAD_ROOT:-./overlay}/vllm/models/deepseek_v4/attention.py:/usr/local/lib/python3.12/dist-packages/vllm/models/deepseek_v4/attention.py:ro
+      - ${TP_PAD_ROOT:-./overlay}/vllm/models/deepseek_v4/nvidia/model.py:/usr/local/lib/python3.12/dist-packages/vllm/models/deepseek_v4/nvidia/model.py:ro
+      - ${TP_PAD_ROOT:-./overlay}/vllm/models/deepseek_v4/nvidia/dspark.py:/usr/local/lib/python3.12/dist-packages/vllm/models/deepseek_v4/nvidia/dspark.py:ro
+      - ${TP_PAD_ROOT:-./overlay}/vllm/model_executor/models/qwen3_dspark.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/models/qwen3_dspark.py:ro
+      - ${TP_PAD_ROOT:-./overlay}/vllm/v1/worker/gpu/spec_decode/dspark/speculator.py:/usr/local/lib/python3.12/dist-packages/vllm/v1/worker/gpu/spec_decode/dspark/speculator.py:ro
+
+    environment:
+      HF_HOME: /cache/huggingface
+      HF_HUB_OFFLINE: "${HF_HUB_OFFLINE:-1}"
+      TRANSFORMERS_OFFLINE: "${TRANSFORMERS_OFFLINE:-1}"
+      HF_HUB_DISABLE_XET: "${HF_HUB_DISABLE_XET:-1}"
+      DSPARK_MODEL: "${DSPARK_MODEL}"
+      DSPARK_REVISION: "${DSPARK_REVISION:-}"
+      SERVED_MODEL_NAME: "${SERVED_MODEL_NAME:-deepseek-v4-flash-0731}"
+      VLLM_PREFIX_CACHE_RETENTION_INTERVAL: "${VLLM_PREFIX_CACHE_RETENTION_INTERVAL:-4096}"
+      DSPARK_ISSUE43_SCHED_DIAG: "${DSPARK_ISSUE43_SCHED_DIAG:-0}"
+      VLLM_CACHE_ROOT: /cache/huggingface/vllm-cache
+      VLLM_HOST_IP: "${VLLM_HOST_IP:-}"
+      VLLM_ALLOW_LONG_MAX_MODEL_LEN: "${VLLM_ALLOW_LONG_MAX_MODEL_LEN:-1}"
+      VLLM_SPARSE_INDEXER_MAX_LOGITS_MB: "${VLLM_SPARSE_INDEXER_MAX_LOGITS_MB:-256}"
+      VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS: "${VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS:-0}"
+      VLLM_USE_FLASHINFER_SAMPLER: "${VLLM_USE_FLASHINFER_SAMPLER:-1}"
+      VLLM_USE_BREAKABLE_CUDAGRAPH: "${VLLM_USE_BREAKABLE_CUDAGRAPH:-0}"
+      TORCH_CUDA_ARCH_LIST: "${TORCH_CUDA_ARCH_LIST:-12.1a}"
+      FLASHINFER_CUDA_ARCH_LIST: "${FLASHINFER_CUDA_ARCH_LIST:-12.1a}"
+      CUTE_DSL_ARCH: "${CUTE_DSL_ARCH:-sm_121a}"
+      FLASHINFER_DISABLE_VERSION_CHECK: "1"
+      FLASHINFER_WORKSPACE_BASE: /cache/huggingface/flashinfer
+      TILELANG_CLEANUP_TEMP_FILES: "1"
+      PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+      NCCL_NET: "${NCCL_NET:-Mesh}"
+      NCCL_IB_DISABLE: "${NCCL_IB_DISABLE:-1}"
+      NCCL_IB_HCA: "${NCCL_IB_HCA:-}"
+      NCCL_SOCKET_IFNAME: "${NCCL_SOCKET_IFNAME}"
+      TP_SOCKET_IFNAME: "${TP_SOCKET_IFNAME:-${NCCL_SOCKET_IFNAME}}"
+      GLOO_SOCKET_IFNAME: "${GLOO_SOCKET_IFNAME:-${NCCL_SOCKET_IFNAME}}"
+      NCCL_IB_ADDR_FAMILY: AF_INET
+      NCCL_IB_ROCE_VERSION_NUM: "2"
+      NCCL_P2P_DISABLE: "${NCCL_P2P_DISABLE:-1}"
+      NCCL_SHM_DISABLE: "${NCCL_SHM_DISABLE:-1}"
+      NCCL_CUMEM_ENABLE: "0"
+      NCCL_IGNORE_CPU_AFFINITY: "1"
+      NCCL_DEBUG: "${NCCL_DEBUG:-WARN}"
+      NCCL_NVLS_ENABLE: "0"
+      NCCL_NET_PLUGIN: "${NCCL_NET_PLUGIN:-mesh}"
+      NCCL_ALGO: "${NCCL_ALGO:-Ring}"
+      NCCL_MESH_DEBUG: "${NCCL_MESH_DEBUG:-0}"
+      NODE_RANK: "${NODE_RANK}"
+      HEADLESS: "${HEADLESS:-}"
+      MASTER_ADDR: "${MASTER_ADDR}"
+      MASTER_PORT: "${MASTER_PORT:-25200}"
+      MTP_NUM_TOKENS: "${MTP_NUM_TOKENS:-5}"
+      DEFAULT_THINKING: "${DEFAULT_THINKING:-off}"
+      ENABLE_EP: "${ENABLE_EP:-1}"
+      MOE_BACKEND: "${MOE_BACKEND:-flashinfer_cutlass}"
+      ALL2ALL_BACKEND: "${ALL2ALL_BACKEND:-allgather_reducescatter}"
+      EPLB_CONFIG: "${EPLB_CONFIG:-}"
+      ENABLE_EPLB: "${ENABLE_EPLB:-1}"
+      TENSOR_PARALLEL_SIZE: "${TENSOR_PARALLEL_SIZE:-3}"
+      PIPELINE_PARALLEL_SIZE: "${PIPELINE_PARALLEL_SIZE:-1}"
+      DATA_PARALLEL_SIZE: "${DATA_PARALLEL_SIZE:-1}"
+      DATA_PARALLEL_RPC_PORT: "${DATA_PARALLEL_RPC_PORT:-13345}"
+      NNODES: "${NNODES:-3}"
+      VLLM_DSV4_TP_PAD: "${VLLM_DSV4_TP_PAD:-heads}"
+      VLLM_DSV4_PAD_HEADS: "${VLLM_DSV4_PAD_HEADS:-72}"
+      VLLM_DSV4_PAD_GROUPS: "${VLLM_DSV4_PAD_GROUPS:-9}"
+      DSPARK_SKIP_HOTFIX: "${DSPARK_SKIP_HOTFIX:-0}"
+      DSPARK_SKIP_ISSUE22_HOTFIX: "${DSPARK_SKIP_ISSUE22_HOTFIX:-0}"
+      DSPARK_SKIP_SUPPRESS_STOPS_HOTFIX: "${DSPARK_SKIP_SUPPRESS_STOPS_HOTFIX:-0}"
+      DSPARK_SUPPRESS_STOPS_IN_REASONING: "${DSPARK_SUPPRESS_STOPS_IN_REASONING:-1}"
+      MAX_MODEL_LEN: "${MAX_MODEL_LEN:-1048576}"
+      MAX_NUM_SEQS: "${MAX_NUM_SEQS:-4}"
+      MAX_NUM_BATCHED_TOKENS: "${MAX_NUM_BATCHED_TOKENS:-8192}"
+      LONG_PREFILL_TOKEN_THRESHOLD: "${LONG_PREFILL_TOKEN_THRESHOLD:-1024}"
+      GPU_MEMORY_UTILIZATION: "${GPU_MEMORY_UTILIZATION:-0.835}"
+      VLLM_HOST: "${VLLM_HOST:-0.0.0.0}"
+      VLLM_PORT: "${VLLM_PORT:-8888}"
+
+    command:
+      - bash
+      - -lc
+      - >
+        export PATH="/usr/local/cuda/bin:/usr/local/bin:$${PATH:-}";
+        export CUDA_HOME="$${CUDA_HOME:-/usr/local/cuda}";
+        export LD_LIBRARY_PATH="/usr/local/cuda/lib64:$${LD_LIBRARY_PATH:-}";
+        if [ -f /opt/nccl-mesh/libnccl-net-mesh.so ]; then
+          export LD_LIBRARY_PATH="/opt/nccl-mesh:$${LD_LIBRARY_PATH}";
+        fi;
+        ENCODING_SOURCE="$${DSPARK_ENCODING_FILE:-}";
+        if [ -z "$${ENCODING_SOURCE}" ]; then
+          MODEL_HUB_DIR=$$(printf '%s' "$${DSPARK_MODEL}" | sed 's|/|--|g');
+          if [ -n "$${DSPARK_REVISION:-}" ] && [ -f "/cache/huggingface/hub/models--$${MODEL_HUB_DIR}/snapshots/$${DSPARK_REVISION}/encoding/encoding_dsv4.py" ]; then
+            ENCODING_SOURCE="/cache/huggingface/hub/models--$${MODEL_HUB_DIR}/snapshots/$${DSPARK_REVISION}/encoding/encoding_dsv4.py";
+          fi;
+          if [ -z "$${ENCODING_SOURCE}" ]; then
+            for candidate in /cache/huggingface/hub/models--$${MODEL_HUB_DIR}/snapshots/*/encoding/encoding_dsv4.py; do
+              if [ -f "$${candidate}" ]; then ENCODING_SOURCE="$${candidate}"; break; fi;
+            done;
+          fi;
+        fi;
+        if [ -n "$${ENCODING_SOURCE}" ] && [ -f "$${ENCODING_SOURCE}" ]; then
+          cp "$${ENCODING_SOURCE}" /usr/local/lib/python3.12/dist-packages/vllm/tokenizers/deepseek_v4_encoding.py;
+          python3 /opt/dspark-patches/hotfix-encoding-dsv4-issue21.py;
+        fi;
+        if [ "$${DSPARK_SKIP_ISSUE22_HOTFIX:-0}" != "1" ] && [ -f /opt/dspark-patches/hotfix-nvfp4-ds-mla-issue22.sh ]; then
+          bash /opt/dspark-patches/hotfix-nvfp4-ds-mla-issue22.sh || true;
+        fi;
+        if [ "$${DSPARK_SKIP_HOTFIX:-0}" != "1" ]; then
+          for _hf in hotfix-dsv4-mtp-buffer-50312.sh hotfix-dsv4-adaptive-topk-50004.sh hotfix-dsv4-skip-topk-49486.sh hotfix-dsv4-dense-prefill-indexer-48407.sh hotfix-dsv4-skip-empty-c128-48957.sh hotfix-dsv4-flashmla-workspace-50298.sh hotfix-dsv4-grammar-advance.sh; do
+            if [ -f /opt/dspark-patches/$${_hf} ]; then bash /opt/dspark-patches/$${_hf} || true; fi;
+          done;
+        fi;
+        python3 /opt/dspark-patches/hotfix-dsv4-issue27-partial-prefill-concurrency.py;
+        python3 /opt/dspark-patches/hotfix-dsv4-issue43-decode-fairness-and-diag.py;
+        python3 /opt/dspark-patches/hotfix-dsv4-issue26-hybrid-swa-min.py;
+        python3 /opt/dspark-patches/hotfix-dsv4-issue31-v2-thinking-budget-gpu.py || true;
+        python3 /opt/dspark-patches/hotfix-dsv4-issue55-tool-truncation.py || true;
+        if [ "$${DSPARK_SKIP_SUPPRESS_STOPS_HOTFIX:-0}" != "1" ]; then
+          python3 /opt/dspark-patches/hotfix-dsv4-suppress-stops-in-reasoning.py;
+        fi;
+        SPECULATIVE_CONFIG="{\"method\":\"dspark\",\"num_speculative_tokens\":$${MTP_NUM_TOKENS:-5},\"draft_sample_method\":\"probabilistic\"}";
+        SPEC_ARGS="";
+        if [ "$${MTP_NUM_TOKENS:-5}" != "0" ]; then SPEC_ARGS="--speculative-config $${SPECULATIVE_CONFIG}"; fi;
+        EP_ARGS="";
+        if [ "$${ENABLE_EP:-1}" = "1" ]; then EP_ARGS="--enable-expert-parallel --all2all-backend $${ALL2ALL_BACKEND:-allgather_reducescatter}"; fi;
+        if [ "$${ENABLE_EPLB:-1}" = "1" ]; then EP_ARGS="$${EP_ARGS} --enable-eplb"; fi;
+        if [ -n "$${EPLB_CONFIG:-}" ]; then EP_ARGS="$${EP_ARGS} --eplb-config=$${EPLB_CONFIG}"; fi;
+        case "$${DEFAULT_THINKING:-off}" in
+          off) DEFAULT_CHAT_TEMPLATE_KWARGS='{"thinking":false}' ;;
+          low) DEFAULT_CHAT_TEMPLATE_KWARGS='{"thinking":true,"reasoning_effort":"low"}' ;;
+          high) DEFAULT_CHAT_TEMPLATE_KWARGS='{"thinking":true,"reasoning_effort":"high"}' ;;
+          max) DEFAULT_CHAT_TEMPLATE_KWARGS='{"thinking":true,"reasoning_effort":"max"}' ;;
+          *) echo "DEFAULT_THINKING must be off|low|high|max" >&2; exit 2 ;;
+        esac;
+        REVISION_ARGS="";
+        if [ -n "$${DSPARK_REVISION:-}" ]; then REVISION_ARGS="--revision $${DSPARK_REVISION}"; fi;
+        exec /usr/local/bin/vllm serve $${DSPARK_MODEL}
+        $${REVISION_ARGS}
+        --served-model-name $${SERVED_MODEL_NAME}
+        --host $${VLLM_HOST}
+        --port $${VLLM_PORT}
+        --trust-remote-code
+        --tensor-parallel-size $${TENSOR_PARALLEL_SIZE}
+        --pipeline-parallel-size $${PIPELINE_PARALLEL_SIZE}
+        --data-parallel-size $${DATA_PARALLEL_SIZE}
+        --data-parallel-size-local 1
+        --data-parallel-address $${MASTER_ADDR}
+        --data-parallel-rpc-port $${DATA_PARALLEL_RPC_PORT}
+        --kv-cache-dtype nvfp4_ds_mla
+        --block-size 256
+        --max-model-len $${MAX_MODEL_LEN}
+        --max-num-seqs $${MAX_NUM_SEQS}
+        --max-num-batched-tokens $${MAX_NUM_BATCHED_TOKENS}
+        --long-prefill-token-threshold $${LONG_PREFILL_TOKEN_THRESHOLD}
+        --max-cudagraph-capture-size $$(( $${MAX_NUM_SEQS} * ($${MTP_NUM_TOKENS} + 1) ))
+        --gpu-memory-utilization $${GPU_MEMORY_UTILIZATION}
+        --enable-prefix-caching
+        --enable-prompt-tokens-details
+        --async-scheduling
+        --enable-chunked-prefill
+        $${SPEC_ARGS} $${EP_ARGS}
+        --tokenizer-mode deepseek_v4
+        --distributed-executor-backend mp
+        --moe-backend $${MOE_BACKEND}
+        --tool-call-parser deepseek_v4
+        --enable-auto-tool-choice
+        --reasoning-parser deepseek_v4
+        --reasoning-config '{"reasoning_parser":"deepseek_v4","reasoning_start_str":"<think>","reasoning_end_str":"</think>"}'
+        --default-chat-template-kwargs "$${DEFAULT_CHAT_TEMPLATE_KWARGS}"
+        --generation-config vllm
+        --enable-flashinfer-autotune
+        --nnodes $${NNODES}
+        --node-rank $${NODE_RANK}
+        --master-addr $${MASTER_ADDR}
+        --master-port $${MASTER_PORT}
+        $${HEADLESS:+--headless}

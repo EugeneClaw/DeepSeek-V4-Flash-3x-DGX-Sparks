@@ -1,0 +1,11 @@
+.env
+.env.*
+!.env.example
+nccl-mesh/
+nccl-mesh-plugin/
+*.so
+__pycache__/
+*.pyc
+.DS_Store
+results/*.jsonl
+.cache/

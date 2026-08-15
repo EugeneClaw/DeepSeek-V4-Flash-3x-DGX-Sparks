@@ -1,0 +1,29 @@
+name: validate
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: bash -n
+        run: |
+          set -euo pipefail
+          for f in start.sh stop.sh status.sh logs.sh smoke.sh \
+                   scripts/prepare-model.sh scripts/prepare-tp3-model-dir.sh \
+                   scripts/build-image.sh scripts/build-mesh-plugin.sh; do
+            bash -n "$f"
+          done
+      - name: compose YAML
+        run: python3 -c "import pathlib; from pathlib import Path; Path('docker-compose.yml').read_text()"
+      - name: no lab PII in tracked files
+        run: |
+          set -euo pipefail
+          if git grep -nE 'kapic|100\.89\.|tailscale|spark-84b2|spark-1958|gx10-fe6d|models\.kapic' -- . \
+              ':!.github/workflows/validate.yml'; then
+            echo "refusing to ship lab PII" >&2
+            exit 1
+          fi
