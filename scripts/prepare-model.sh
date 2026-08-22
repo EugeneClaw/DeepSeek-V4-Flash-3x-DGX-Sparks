@@ -15,6 +15,10 @@ fi
 
 echo "Downloading $MODEL ${REV:+@ $REV} on node0 (forces online)..."
 export HF_HUB_OFFLINE=0
+# huggingface_hub defaults both timeouts to 10s — short enough that a slow or
+# proxied link kills a multi-GB shard mid-transfer (Mia #97). Ride it out.
+export HF_HUB_DOWNLOAD_TIMEOUT="${HF_HUB_DOWNLOAD_TIMEOUT:-120}"
+export HF_HUB_ETAG_TIMEOUT="${HF_HUB_ETAG_TIMEOUT:-30}"
 if command -v huggingface-cli >/dev/null 2>&1; then
   if [ -n "$REV" ]; then
     huggingface-cli download "$MODEL" --revision "$REV"

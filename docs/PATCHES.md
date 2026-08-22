@@ -57,3 +57,23 @@ image so every node has the same digest.
 `patches/compressor.py` is a PP=3 stride experiment. It unblocks serve
 and then decode falls to ~0.2 tok/s. Left in the tree for provenance;
 compose does not mount it.
+
+## Security / auth (fail-closed)
+
+| File | Why |
+|---|---|
+| `patches/hotfix-vllm-redact-api-key-log.sh` | vLLM logs the full `--api-key` list in `non-default args` at startup. This redacts to `<redacted:N value(s)>` (count preserved — the documented way to verify one flag carried N keys), with a behavioural `--status` check. Keyed starts apply + verify it and refuse to serve otherwise. Port of Mia PR #89. |
+
+## Vendored-but-deferred
+
+| File | Why deferred |
+|---|---|
+| `patches/hotfix-gb10-spin-wait.sh` | TP=2-specific busy-wait sleep. The 3× runs TP=3 over the mesh; enable only after a 3× A/B. Not invoked by any entrypoint today. |
+
+## Changes vs the vendored 2026-08-15 baseline (this port)
+
+- All vendored `.sh` hotfixes are now **transactional**: every hunk is validated against a staged in-memory view before anything touches the tree, publishes via same-directory atomic rename, preserves modes, verifies committed bytes, and restores originals on any failure (Mia PR #103). The entrypoint no longer swallows failures: a missing or failing hotfix aborts the container before `exec vllm` (was `|| true` + silent skip). Escape hatches unchanged (`DSPARK_SKIP_HOTFIX`, `_ISSUE22`, `_SUPPRESS_STOPS`).
+- `hotfix-dsv4-issue27-partial-prefill-concurrency.py`: now honors `DSPARK_MAX_INFLIGHT_PREFILLS` (1–3, default 2). The 2026-08-15 version hard-coded the serialising gate. Upstream A/B: 32K×c4 per-stream decode 8.2 → 24.6 tok/s (Mia #90).
+- `hotfix-dsv4-issue31-v2-thinking-budget-gpu.py`: now **opt-in** (`DSPARK_ENABLE_ISSUE31_GPU_HOTFIX`, default 0). Default-on reproduced the omit-`thinking_token_budget` decode cliff (Mia #66).
+- All vendored `.py` hotfixes gained read-only `--status` modes.
+- `hotfix-dsv4-issue55-tool-truncation.py` no longer runs under `|| true`.

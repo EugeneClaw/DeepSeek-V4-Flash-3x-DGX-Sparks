@@ -38,6 +38,28 @@ services:
       DSPARK_MODEL: "${DSPARK_MODEL}"
       DSPARK_REVISION: "${DSPARK_REVISION:-}"
       SERVED_MODEL_NAME: "${SERVED_MODEL_NAME:-deepseek-v4-flash-0731}"
+      # Optional single API key for the OpenAI endpoint (vLLM reads VLLM_API_KEY
+      # natively). Leave empty for stock unauthenticated behavior.
+      VLLM_API_KEY: "${VLLM_API_KEY:-}"
+      # Optional multi-key API auth, enforced by vLLM itself. `--api-key` is a
+      # list flag: ONE invocation carries all space-separated keys, preserving
+      # duplicates and order. Default empty = no --api-key flag at all.
+      # Mutually exclusive with VLLM_API_KEY (entrypoint exits 2 if both set).
+      # Guarded routes on the pinned runtime: /v1, /v2, /inference. Everything
+      # else stays keyless (incl. POST /invocations, POST /generative_scoring,
+      # /tokenize, /detokenize, /health, /metrics) — network-level access
+      # control remains required. Revocation, not per-key attribution.
+      DSPARK_API_KEYS: "${DSPARK_API_KEYS:-}"
+      # Scheduler: N overlapping chunked prefills (1-3; Mia #90 measured 32K x c4
+      # per-stream decode 8.2 -> 24.6 tok/s at 2 on the 2x). Default 2.
+      DSPARK_MAX_INFLIGHT_PREFILLS: "${DSPARK_MAX_INFLIGHT_PREFILLS:-2}"
+      # Draft sampler: probabilistic (default) | greedy. Validated in entrypoint.
+      DRAFT_SAMPLE_METHOD: "${DRAFT_SAMPLE_METHOD:-probabilistic}"
+      # Ride out mid-serve TileLang/CuTeDSL JIT instead of EngineCore death (Mia #65/#87).
+      VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS: "${VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS:-1800}"
+      TILELANG_CACHE_DIR: /cache/huggingface/tilelang-cache
+      # Opt-in GPU thinking_token_budget hotfix (Mia #66: omit-field decode cliff when default-on).
+      DSPARK_ENABLE_ISSUE31_GPU_HOTFIX: "${DSPARK_ENABLE_ISSUE31_GPU_HOTFIX:-0}"
       VLLM_PREFIX_CACHE_RETENTION_INTERVAL: "${VLLM_PREFIX_CACHE_RETENTION_INTERVAL:-4096}"
       DSPARK_ISSUE43_SCHED_DIAG: "${DSPARK_ISSUE43_SCHED_DIAG:-0}"
       VLLM_CACHE_ROOT: /cache/huggingface/vllm-cache
@@ -109,6 +131,7 @@ services:
         export PATH="/usr/local/cuda/bin:/usr/local/bin:$${PATH:-}";
         export CUDA_HOME="$${CUDA_HOME:-/usr/local/cuda}";
         export LD_LIBRARY_PATH="/usr/local/cuda/lib64:$${LD_LIBRARY_PATH:-}";
+        API_KEY_ARGS=(); case "$${DSPARK_API_KEYS:-}" in *[$$'\r\n\v\f']*) echo "error: DSPARK_API_KEYS must be a single-line space-separated list" >&2; exit 2 ;; *\\*) echo "error: DSPARK_API_KEYS must not contain backslashes" >&2; exit 2 ;; esac; _dspark_keys_set=0; case "$${DSPARK_API_KEYS:-}" in *[!$$' \t']*) _dspark_keys_set=1 ;; esac; if [ -n "$${VLLM_API_KEY:-}" ] && [ "$${_dspark_keys_set}" = "1" ]; then echo "error: VLLM_API_KEY and DSPARK_API_KEYS are both set; set exactly one of them" >&2; exit 2; fi; if [ "$${_dspark_keys_set}" = "1" ]; then read -r -a _dspark_keys <<< "$${DSPARK_API_KEYS}"; for _dspark_key in "$${_dspark_keys[@]}"; do case "$${_dspark_key}" in -*) echo "error: DSPARK_API_KEYS contains a token beginning with '-'" >&2; exit 2 ;; esac; done; API_KEY_ARGS=(--api-key "$${_dspark_keys[@]}"); fi;
         if [ -f /opt/nccl-mesh/libnccl-net-mesh.so ]; then
           export LD_LIBRARY_PATH="/opt/nccl-mesh:$${LD_LIBRARY_PATH}";
         fi;
@@ -128,29 +151,33 @@ services:
           cp "$${ENCODING_SOURCE}" /usr/local/lib/python3.12/dist-packages/vllm/tokenizers/deepseek_v4_encoding.py;
           python3 /opt/dspark-patches/hotfix-encoding-dsv4-issue21.py;
         fi;
-        if [ "$${DSPARK_SKIP_ISSUE22_HOTFIX:-0}" != "1" ] && [ -f /opt/dspark-patches/hotfix-nvfp4-ds-mla-issue22.sh ]; then
-          bash /opt/dspark-patches/hotfix-nvfp4-ds-mla-issue22.sh || true;
-        fi;
+        if [ "$${DSPARK_SKIP_ISSUE22_HOTFIX:-0}" != "1" ]; then if [ ! -f /opt/dspark-patches/hotfix-nvfp4-ds-mla-issue22.sh ]; then echo "FATAL: /opt/dspark-patches/hotfix-nvfp4-ds-mla-issue22.sh missing" >&2; exit 1; fi; bash /opt/dspark-patches/hotfix-nvfp4-ds-mla-issue22.sh || exit 1; fi;
         if [ "$${DSPARK_SKIP_HOTFIX:-0}" != "1" ]; then
           for _hf in hotfix-dsv4-mtp-buffer-50312.sh hotfix-dsv4-adaptive-topk-50004.sh hotfix-dsv4-skip-topk-49486.sh hotfix-dsv4-dense-prefill-indexer-48407.sh hotfix-dsv4-skip-empty-c128-48957.sh hotfix-dsv4-flashmla-workspace-50298.sh hotfix-dsv4-grammar-advance.sh; do
-            if [ -f /opt/dspark-patches/$${_hf} ]; then bash /opt/dspark-patches/$${_hf} || true; fi;
+            if [ ! -f /opt/dspark-patches/$${_hf} ]; then echo "FATAL: /opt/dspark-patches/$${_hf} missing" >&2; exit 1; fi;
+            bash /opt/dspark-patches/$${_hf} || exit 1;
           done;
         fi;
         python3 /opt/dspark-patches/hotfix-dsv4-issue27-partial-prefill-concurrency.py;
         python3 /opt/dspark-patches/hotfix-dsv4-issue43-decode-fairness-and-diag.py;
         python3 /opt/dspark-patches/hotfix-dsv4-issue26-hybrid-swa-min.py;
-        python3 /opt/dspark-patches/hotfix-dsv4-issue31-v2-thinking-budget-gpu.py || true;
-        python3 /opt/dspark-patches/hotfix-dsv4-issue55-tool-truncation.py || true;
+        if [ "$${DSPARK_ENABLE_ISSUE31_GPU_HOTFIX:-0}" = "1" ]; then python3 /opt/dspark-patches/hotfix-dsv4-issue31-v2-thinking-budget-gpu.py || exit 1; fi;
+        python3 /opt/dspark-patches/hotfix-dsv4-issue55-tool-truncation.py;
         if [ "$${DSPARK_SKIP_SUPPRESS_STOPS_HOTFIX:-0}" != "1" ]; then
           python3 /opt/dspark-patches/hotfix-dsv4-suppress-stops-in-reasoning.py;
         fi;
-        SPECULATIVE_CONFIG="{\"method\":\"dspark\",\"num_speculative_tokens\":$${MTP_NUM_TOKENS:-5},\"draft_sample_method\":\"probabilistic\"}";
+        if [ "$${_dspark_keys_set}" = "1" ] || [ -n "$${VLLM_API_KEY:-}" ]; then bash /opt/dspark-patches/hotfix-vllm-redact-api-key-log.sh || exit 1; bash /opt/dspark-patches/hotfix-vllm-redact-api-key-log.sh --status || exit 1; fi;
+        case "$${DRAFT_SAMPLE_METHOD:-probabilistic}" in
+          probabilistic|greedy) DRAFT_SAMPLE_METHOD="$${DRAFT_SAMPLE_METHOD:-probabilistic}" ;;
+          *) echo "DRAFT_SAMPLE_METHOD must be one of: probabilistic, greedy (got: $${DRAFT_SAMPLE_METHOD})" >&2; exit 2 ;;
+        esac;
+        SPECULATIVE_CONFIG="{\"method\":\"dspark\",\"num_speculative_tokens\":$${MTP_NUM_TOKENS:-5},\"draft_sample_method\":\"$${DRAFT_SAMPLE_METHOD}\"}";
         SPEC_ARGS="";
         if [ "$${MTP_NUM_TOKENS:-5}" != "0" ]; then SPEC_ARGS="--speculative-config $${SPECULATIVE_CONFIG}"; fi;
         EP_ARGS="";
         if [ "$${ENABLE_EP:-1}" = "1" ]; then EP_ARGS="--enable-expert-parallel --all2all-backend $${ALL2ALL_BACKEND:-allgather_reducescatter}"; fi;
         if [ "$${ENABLE_EPLB:-1}" = "1" ]; then EP_ARGS="$${EP_ARGS} --enable-eplb"; fi;
-        if [ -n "$${EPLB_CONFIG:-}" ]; then EP_ARGS="$${EP_ARGS} --eplb-config=$${EPLB_CONFIG}"; fi;
+        if [ "$${ENABLE_EPLB:-1}" = "1" ] && [ -n "$${EPLB_CONFIG:-}" ]; then EP_ARGS="$${EP_ARGS} --eplb-config=$${EPLB_CONFIG}"; fi;
         case "$${DEFAULT_THINKING:-off}" in
           off) DEFAULT_CHAT_TEMPLATE_KWARGS='{"thinking":false}' ;;
           low) DEFAULT_CHAT_TEMPLATE_KWARGS='{"thinking":true,"reasoning_effort":"low"}' ;;
@@ -166,6 +193,7 @@ services:
         --host $${VLLM_HOST}
         --port $${VLLM_PORT}
         --trust-remote-code
+        "$${API_KEY_ARGS[@]}"
         --tensor-parallel-size $${TENSOR_PARALLEL_SIZE}
         --pipeline-parallel-size $${PIPELINE_PARALLEL_SIZE}
         --data-parallel-size $${DATA_PARALLEL_SIZE}

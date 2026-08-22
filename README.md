@@ -257,6 +257,8 @@ ABLITERATED=0
 | **`DEFAULT_THINKING`** | `off` | `off` / `low` / `high` / `max`. Request-level `chat_template_kwargs` still wins. |
 | `VLLM_HOST` | `0.0.0.0` | `127.0.0.1` for head-only tests. |
 | `VLLM_PORT` | `8888` | OpenAI-compatible API. |
+| `VLLM_API_KEY` | *(empty)* | Single API key. Mutually exclusive with `DSPARK_API_KEYS`. |
+| `DSPARK_API_KEYS` | *(empty)* | Space-separated list of API keys (one `--api-key` flag, N keys). Default empty = unauthenticated. |
 
 `max_tokens` counts **think + answer**. With `DEFAULT_THINKING=max`, a
 harness cap of 256/512 often returns empty `content` because reasoning
@@ -276,6 +278,28 @@ set thinking `off`/`low`, or send `thinking_token_budget` (hotfix #31):
 Client `stop` strings wait for `</think>` (suppress-stops hotfix). A
 tool call cut off by `max_tokens` reports `finish_reason: "length"`
 instead of a poisoned `tool_calls` payload (hotfix #55).
+
+#### API authentication (optional, default off)
+
+Set **one** of these in `.env` — never both (start, smoke, status, and
+all three container entrypoints exit 2 before any side effect):
+
+- `VLLM_API_KEY=…` — single key.
+- `DSPARK_API_KEYS="k1 k2 k3"` — multiple independently revocable keys
+  (quoted; single line; space/tab separated; duplicates allowed).
+
+What you get: `Authorization: Bearer <key>` required on `/v1`, `/v2`,
+`/inference`; every key in the list is accepted; rotation = edit `.env`
++ `./stop.sh && ./start.sh`. What you don't get: everything else stays
+**keyless** (`/invocations`, `/generative_scoring`, `/tokenize`,
+`/health`, `/metrics`…), so a keyed deployment still needs network-level
+access control on the port; and vLLM does not attribute requests to
+keys — this is revocation and blast-radius control, not per-user logs.
+Keys are visible to host `ps` / `docker inspect` (argv/env) by design;
+they are kept out of the startup Docker log by a fail-closed redaction
+hotfix (`'api_key': ['<redacted:N value(s)>']`). Probes (`smoke.sh`,
+`status.sh`, and the start.sh readiness poll) send the first parsed key
+automatically.
 
 ### Serve shape
 

@@ -19,6 +19,20 @@ jobs:
           done
       - name: compose YAML
         run: python3 -c "import pathlib; from pathlib import Path; Path('docker-compose.yml').read_text()"
+      - name: python suites (need >=3.10 for PEP-604 in vendored hotfixes)
+        run: |
+          set -euo pipefail
+          python3 --version
+          for t in test-dspark-api-keys.py test-env-normalisation.py \
+                   test-redact-api-key-log.py test-hotfix-atomic-transaction.py; do
+            echo "::group::$t"
+            python3 "scripts/$t"
+            echo "::endgroup::"
+          done
+      - name: bash suites
+        run: |
+          set -euo pipefail
+          bash scripts/test-draft-sample-method-gate.sh
       - name: no lab PII in tracked files
         run: |
           set -euo pipefail

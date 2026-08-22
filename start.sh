@@ -12,10 +12,31 @@ if [ ! -f "$ENV_FILE" ]; then
   exit 1
 fi
 
+# Normalise the operator's env file once into a private 0600 snapshot
+# (BOM stripped, CRLF -> LF); the operator's file stays byte-identical.
+# Port of Mia #98. One snapshot feeds this script and every .env.3n publish.
+_cleanup_dspark_env() { [ -z "${_dspark_env_clean:-}" ] || rm -f -- "$_dspark_env_clean"; }
+trap _cleanup_dspark_env EXIT
+_dspark_env_clean="$(mktemp)"
+chmod 600 "$_dspark_env_clean"
+# DSPARK_API_KEYS ambient guard (begin): the key list must come from .env only.
+_dspark_ambient_has=0
+_dspark_ambient_keys=""
+if [ -n "${DSPARK_API_KEYS+x}" ]; then
+  _dspark_ambient_has=1
+  _dspark_ambient_keys="$DSPARK_API_KEYS"
+fi
+unset DSPARK_API_KEYS
+sed $'1s/^\xEF\xBB\xBF//; s/\r$//' "$ENV_FILE" > "$_dspark_env_clean"
 set -a
-# shellcheck disable=SC1090
-source "$ENV_FILE"
+# shellcheck disable=RC1090
+source "$_dspark_env_clean" || exit
 set +a
+if [ "$_dspark_ambient_has" = "1" ] && [ "$_dspark_ambient_keys" != "${DSPARK_API_KEYS:-}" ]; then
+  echo "error: DSPARK_API_KEYS is set in the environment but does not match .env; set it only in .env" >&2
+  exit 2
+fi
+# DSPARK_API_KEYS ambient guard (end)
 
 for var in NODE0_HOST NODE1_HOST NODE2_HOST NODE0_IP NODE1_IP NODE2_IP GLOO_IFACE; do
   eval "val=\${$var-}"
@@ -24,6 +45,48 @@ for var in NODE0_HOST NODE1_HOST NODE2_HOST NODE0_IP NODE1_IP NODE2_IP GLOO_IFAC
     exit 2
   fi
 done
+
+# DSPARK_API_KEYS / VLLM_API_KEY validation (port of Mia PR #89). Identical
+# rules to the compose entrypoint so the launcher fails the same way, before
+# any side effect. Probes use the first parsed key.
+AUTH_HEADER_ARGS=()
+case "${DSPARK_API_KEYS:-}" in
+  *[$'\r\n\v\f']*)
+    echo "error: DSPARK_API_KEYS must be a single-line space-separated list" >&2
+    exit 2
+    ;;
+  *\\*)
+    echo "error: DSPARK_API_KEYS must not contain backslashes" >&2
+    exit 2
+    ;;
+esac
+_dspark_keys_set=0
+case "${DSPARK_API_KEYS:-}" in
+  *[!$' \t']*) _dspark_keys_set=1 ;;
+esac
+if [ -n "${VLLM_API_KEY:-}" ] && [ "$_dspark_keys_set" = "1" ]; then
+  echo "error: VLLM_API_KEY and DSPARK_API_KEYS are both set; set exactly one of them" >&2
+  exit 2
+fi
+if [ "$_dspark_keys_set" = "1" ]; then
+  _dspark_keys=()
+  # shellcheck disable=SC2206
+  read -r -a _dspark_keys <<< "${DSPARK_API_KEYS}"
+  for _dspark_key in "${_dspark_keys[@]}"; do
+    case "$_dspark_key" in
+      -*) echo "error: DSPARK_API_KEYS contains a token beginning with '-'" >&2; exit 2 ;;
+    esac
+  done
+  AUTH_HEADER_ARGS=(-H "Authorization: Bearer ${_dspark_keys[0]}")
+elif [ -n "${VLLM_API_KEY:-}" ]; then
+  AUTH_HEADER_ARGS=(-H "Authorization: Bearer ${VLLM_API_KEY}")
+fi
+# Keyed starts require the startup-log redaction hotfix (it is synced to the
+# workers with the tree, so checking the head copy is sufficient).
+if { [ "$_dspark_keys_set" = "1" ] || [ -n "${VLLM_API_KEY:-}" ]; } && [ ! -f "$ROOT/patches/hotfix-vllm-redact-api-key-log.sh" ]; then
+  echo "error: API keys are configured but patches/hotfix-vllm-redact-api-key-log.sh is missing; keyed starts require the startup-log redaction hotfix" >&2
+  exit 1
+fi
 
 SSH_USER="${SSH_USER:-ubuntu}"
 SSH_PORT="${SSH_PORT:-22}"
@@ -132,14 +195,47 @@ VLLM_DSV4_PAD_GROUPS=${VLLM_DSV4_PAD_GROUPS:-9}
 NCCL_MESH_PLUGIN_DIR=${repo}/nccl-mesh
 TP_PAD_ROOT=${repo}/overlay
 DSPARK_PATCHES_DIR=${repo}/patches
+VLLM_API_KEY="${VLLM_API_KEY:-}"
+DSPARK_API_KEYS="${DSPARK_API_KEYS:-}"
+DSPARK_MAX_INFLIGHT_PREFILLS=${DSPARK_MAX_INFLIGHT_PREFILLS:-2}
+DRAFT_SAMPLE_METHOD=${DRAFT_SAMPLE_METHOD:-probabilistic}
+VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=${VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS:-1800}
+DSPARK_ENABLE_ISSUE31_GPU_HOTFIX=${DSPARK_ENABLE_ISSUE31_GPU_HOTFIX:-0}
 EOF
+}
+
+# Publish .env.3n atomically and 0600 everywhere: a failed transfer must
+# never leave a truncated or world-readable credentials file behind.
+# Port of Mia #98/#5410f88, adapted to three nodes.
+publish_env_local() {
+  local dest="$1" tmp="${1}.tmp.$$"
+  umask 077
+  cat > "$tmp"
+  chmod 600 "$tmp"
+  mv -f -- "$tmp" "$dest"
+}
+publish_env_ssh() {
+  local spec="$1" dest="$2"
+  $SSH "$spec" "
+    set -eu
+    _env_final='$dest'
+    _env_tmp=\"\${_env_final}.tmp.\$\$\"
+    _cleanup_remote_env() { [ -z \"\$_env_tmp\" ] || rm -f -- \"\$_env_tmp\"; }
+    trap _cleanup_remote_env EXIT HUP INT TERM
+    umask 077
+    cat > \"\$_env_tmp\"
+    chmod 600 \"\$_env_tmp\"
+    mv -f -- \"\$_env_tmp\" \"\$_env_final\"
+    _env_tmp=
+    trap - EXIT HUP INT TERM
+  "
 }
 
 sync_tree() {
   local spec="$1" dest="$2"
   $SSH "$spec" "mkdir -p $dest"
   rsync -az -e "ssh $SSH_OPTS -p $SSH_PORT" \
-    --exclude '.git' --exclude '.env' --exclude 'nccl-mesh-plugin' \
+    --exclude '.git' --exclude '.env' --exclude '.env.3n' --exclude 'nccl-mesh-plugin' \
     "$NODE0_DIR/" "$spec:$dest/"
 }
 
@@ -147,6 +243,12 @@ compose_up() {
   local spec="$1" dir="$2"
   $SSH "$spec" "cd $dir && docker compose -p $PROJECT --env-file .env.3n -f docker-compose.yml up -d"
 }
+
+if docker ps --format '{{.Names}}' | grep -qx "${PROJECT}-vllm-dspark-1"; then
+  echo "DSpark head container already exists for project $PROJECT. Stop it first (./stop.sh) or use PROJECT=..." >&2
+  echo "This is not a failed start: dockerd likely restored ranks after a reboot (restart: unless-stopped). The cluster may already be serving. Run ./stop.sh only if you want a cold start. Supervisors: treat exit 3 as already-up (systemd SuccessExitStatus=3)." >&2
+  exit 3
+fi
 
 echo "== 3x EP mesh MTP=${MTP_NUM_TOKENS:-5} util=${GPU_MEMORY_UTILIZATION:-0.835} model=$DSPARK_MODEL =="
 
@@ -189,9 +291,9 @@ $SSH "$N2" "PAD_MODE=heads bash $NODE2_DIR/scripts/prepare-tp3-model-dir.sh \$HO
 
 H1=$($SSH "$N1" 'printf %s "$HOME"')
 H2=$($SSH "$N2" 'printf %s "$HOME"')
-write_env 0 "$NODE0_DIR" "$NODE0_IP" "$HOME" > "$NODE0_DIR/.env.3n"
-write_env 1 "$NODE1_DIR" "$NODE1_IP" "$H1" | $SSH "$N1" "cat > $NODE1_DIR/.env.3n"
-write_env 2 "$NODE2_DIR" "$NODE2_IP" "$H2" | $SSH "$N2" "cat > $NODE2_DIR/.env.3n"
+write_env 0 "$NODE0_DIR" "$NODE0_IP" "$HOME" | publish_env_local "$NODE0_DIR/.env.3n"
+write_env 1 "$NODE1_DIR" "$NODE1_IP" "$H1" | publish_env_ssh "$N1" "$NODE1_DIR/.env.3n"
+write_env 2 "$NODE2_DIR" "$NODE2_IP" "$H2" | publish_env_ssh "$N2" "$NODE2_DIR/.env.3n"
 
 echo "== start rank2 =="
 compose_up "$N2" "$NODE2_DIR"
@@ -200,12 +302,18 @@ echo "== start rank1 =="
 compose_up "$N1" "$NODE1_DIR"
 sleep 5
 echo "== start rank0 =="
-(cd "$NODE0_DIR" && docker compose -p "$PROJECT" --env-file .env.3n -f docker-compose.yml up -d)
+# env -u: the hub-id DSPARK_MODEL/DSPARK_REVISION exports (used for cache
+# prep above) must NOT override .env.3n's container-local model path in
+# compose interpolation — shell env wins over --env-file, and the hub id
+# would make the head load the raw 64-head config (not divisible by TP=3)
+# while the workers load the padded 72-head dir. Workers get a clean env
+# via ssh; the head needs this scrub.
+(cd "$NODE0_DIR" && env -u DSPARK_MODEL -u DSPARK_REVISION docker compose -p "$PROJECT" --env-file .env.3n -f docker-compose.yml up -d)
 
 echo "== waiting for /v1/models =="
 ok=0
 for i in $(seq 1 80); do
-  code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 3 "http://127.0.0.1:${VLLM_PORT:-8888}/v1/models" || echo 000)
+  code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 3 "${AUTH_HEADER_ARGS[@]}" "http://127.0.0.1:${VLLM_PORT:-8888}/v1/models" || echo 000)
   if [ "$code" = "200" ]; then
     echo "READY after ${i} polls"
     ok=1
