@@ -40,3 +40,27 @@ Initial public runbook.
   indexer, skip empty c128, FlashMLA workspace, grammar advance).
 - Measured lane: ~85 decode tok/s, 4.91M KV, 1M ceiling. See
   [results/RESULTS.md](results/RESULTS.md).
+
+## 2026-08-24 — Tested configuration + prose benchmarks
+
+Tested by Eugine Claw on 3× DGX Spark (wired enP7s7, WiFi off, NCCL mesh).
+
+**Improvements:**
+- GPU_MEMORY_UTILIZATION default raised 0.835 → 0.87 (tested: +13% MTP
+  acceptance on prose, +2–3% counting benchmarks, same KV pool)
+- Full prose benchmark suite added (first published for 3× recipe)
+- All Mia 2× hotfixes confirmed applied under EP path
+
+**Results vs FlyCockpit claims (counting benchmark):**
+- Decode @300: 99.2 (claim: 85.2, +16%)
+- Decode @2k: 98.6 (claim: 85.5, +15%)
+- Decode @8k: 99.4 (claim: 82.9, +20%)
+- Prefill @2k warm: 1,425 (claim: 968, +47%)
+
+**Prose (new — not in original recipe):**
+- Solo: ~42 tok/s, 35% acceptance (Mia 2×: ~70 tok/s, ~65% acceptance)
+- Gap is structural: 3-way EP degrades DSpark draft prediction quality
+- See results/RESULTS-2026-08-24.md for full experiment record
+
+Credits: FlyCockpit 3× recipe, MiaAI-Lab 2× recipe, Anemll, autoscriptlabs
+nccl-mesh-plugin. See CREDITS.md.

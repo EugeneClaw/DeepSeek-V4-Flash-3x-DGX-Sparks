@@ -383,6 +383,23 @@ snippets keep their upstream SPDX headers. Weights and the Anemll base
 image have their own terms. No prebuilt `.ko` or cluster hostnames are
 published.
 
+## Which recipe should I use?
+
+**Use the 3× recipe (this repo) if you want:**
+- **Maximum context capacity:** ~5M KV tokens (2× the 2× recipe's 2.5M)
+- **High concurrency:** 4.78× at 1M context (2× the 2× recipe's 2.38×)
+- **Long-context performance:** 99 tok/s at 8k prompts (50% faster than 2× at 66)
+- **Counting/benchmark speed:** 97–99 tok/s (exceeds 2× recipe's 83)
+- **1M-token context ceiling** with room for multiple concurrent long chats
+
+**Use [Mia's 2× recipe](https://github.com/MiaAI-Lab/DeepSeek-v4-Flash-DSpark-2x-DGX-Spark) if you want:**
+- **Maximum per-stream prose speed:** 68–75 tok/s on natural text (1.6–1.8× faster than 3× at ~42)
+- **Better draft acceptance:** ~60–70% (vs 3× at ~35%) — the 2× TP topology gives the DSpark draft model denser expert routing, producing better predictions
+- **Simpler fabric:** one RoCE /24, no mesh plugin needed
+- **Lower power:** one fewer node (one Spark sits idle, ~20W)
+
+**The trade-off is structural, not tunable.** 3-way expert parallelism gives you 2× the KV pool and 2× the concurrency, but halves the DSpark draft model's prediction quality on open text. The draft uses mean-pooled auxiliary hidden states, and with 3-way EP each GPU sees sparser expert routing than under 2-way TP. No in-recipe knob (GPU utilisation, max sequences, MTP depth, sample method, model variant) closes this gap. See [results/RESULTS-2026-08-24.md](results/RESULTS-2026-08-24.md) for the full experiment record.
+
 This recipe stands on [Anemll](https://github.com/Anemll/dspark-vllm-gx10),
 [MiaAI-Lab's 2× runbook](https://github.com/MiaAI-Lab/DeepSeek-v4-Flash-DSpark-2x-DGX-Spark),
 [drowzeys ("Keys")](https://github.com/drowzeys/), and
