@@ -3,6 +3,7 @@
 Serve **DeepSeek-V4-Flash-0731** across three NVIDIA DGX Sparks with a
 pairwise ConnectX-7 triangle, expert parallel, and DSpark speculative decoding.
 
+> Forked from [FlyCockpit/DeepSeek-V4-Flash-3x-DGX-Sparks](https://github.com/FlyCockpit/DeepSeek-V4-Flash-3x-DGX-Sparks) — all original work is theirs; this fork adds testing, hardening, and documentation.
 > **This fork** extends the FlyCockpit 3× recipe with:
 > - API-key authentication (single + multi-key, with log redaction)
 > - Fail-fast hotfix validation (exit 1 on missing patches, not silent continue)
