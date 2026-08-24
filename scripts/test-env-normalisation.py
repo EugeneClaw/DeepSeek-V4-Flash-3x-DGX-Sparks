@@ -66,7 +66,7 @@ class EnvNormalisationTest(unittest.TestCase):
     def test_bom_crlf_normalised_and_snapshot_private(self):
         r = run_env(
             b"\xef\xbb\xbfNODE0_HOST=10.0.0.51\r\n\r\nVLLM_PORT=8888\r\n",
-            'printf "MODE=%s\\n" "$(stat -f %Lp "$_dspark_env_clean" 2>/dev/null || stat -c %a "$_dspark_env_clean")"; cat "$_dspark_env_clean"',
+            'printf "MODE=%s\\n" "$(stat -c %a "$_dspark_env_clean" 2>/dev/null || stat -f %Lp "$_dspark_env_clean")"; cat "$_dspark_env_clean"',
         )
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("NODE0_HOST=10.0.0.51", r.stdout)
