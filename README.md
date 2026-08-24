@@ -115,7 +115,7 @@ See [image/README.md](image/README.md).
 ./scripts/prepare-model.sh
 ```
 
-Default is the validated abliterated 0731 snapshot
+Default is the official DeepSeek V4 Flash 0731 checkpoint (ABLITERATED=0). The abliterated SuperDeepseek model is an optional experimental lane (ABLITERATED=1) for users who explicitly want to compare.
 ([SuperDeepseek](https://huggingface.co/Jiunsong/SuperDeepseek-V4-Flash-abliterated-MQ-2xDGX)
 @ `2a7dd6a1…`). Official
 [`deepseek-ai/DeepSeek-V4-Flash-0731`](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-0731)
@@ -175,7 +175,7 @@ Validate **direct** `:8888` first, then any agent harness.
 | Knob | Default |
 |---|---|
 | Image | `dspark-vllm-gx10:0.1.1-cutlass-ep` (Anemll 0.1.1 + Cutlass EP) |
-| Checkpoint | SuperDeepseek abliterated 0731 (`ABLITERATED=1`) |
+| Checkpoint | Official `deepseek-ai/DeepSeek-V4-Flash-0731` (default, `ABLITERATED=0`); abliterated `Jiunsong/SuperDeepseek-V4-Flash-abliterated-MQ-2xDGX` available as `ABLITERATED=1` |
 | Served name | `deepseek-v4-flash-0731` |
 | Parallelism | TP=3 + EP + EPLB (2 redundant) · PP=1 · DP=1 |
 | MoE | `flashinfer_cutlass` · SiLU (no SwiGLU-bias tensors) |
@@ -254,7 +254,7 @@ after a flip (`./stop.sh` then `./start.sh`).
 
 | Variable | Default | What it does |
 |---|---|---|
-| **`ABLITERATED`** | `1` | `1` = SuperDeepseek (measured lane). `0` = official 0731. |
+| **`ABLITERATED`** | `0` | `0` = official 0731 (default, recommended). `1` = SuperDeepseek abliterated (optional experimental lane). |
 | `DSPARK_REVISION_*` | pinned SHAs in `.env.example` | Empty = tip of that repo. The pad script needs a snapshot SHA. |
 | `SERVED_MODEL_NAME` | `deepseek-v4-flash-0731` | Name clients send as `model`. |
 | `HF_HUB_OFFLINE` | `1` | Keep `1` after both caches are warm. |
@@ -339,10 +339,16 @@ Do not change `TENSOR_PARALLEL_SIZE`, `ENABLE_EP`, `MOE_BACKEND`, or
 ## What speed to expect
 
 Full tables: **[results/RESULTS.md](results/RESULTS.md)**.
+**These numbers are workload-dependent.** The ~83–85 tok/s figure uses the recipe's counting benchmark
+(predictable token sequences; MTP acceptance is ~100%). Natural-language prose runs at ~42 tok/s on
+the 3× configuration because the DSpark draft model accepts only ~35% of proposed tokens on open text.
+See [results/RESULTS-2026-08-24.md](results/RESULTS-2026-08-24.md) for the full prose benchmark, the
+3× vs 2× trade-off, and the our finding on the reason for the gap.
+
 
 | Workload | What you should see |
 |---|---|
-| One chat, 300–8k prompt | **~83–85 decode tok/s** after the first token |
+| One chat, 300–8k prompt (counting benchmark) | **~83–85 tok/s** (original recipe) / **~97–99 tok/s** (tested, util=0.87) after the first token |
 | Warm prefill @ 300 / 2k / 8k | ~570 / ~970 / ~980 tok/s |
 | Cold first request after boot | 6–9 s TTFT (graphs); later requests ~0.5–2 s at 2k |
 | Four short chats | pool has room; we did not publish a c=4 aggregate |
@@ -429,7 +435,7 @@ published.
 - **Simpler fabric:** one RoCE /24, no mesh plugin needed
 - **Lower power:** one fewer node (one Spark sits idle, ~20W)
 
-**The trade-off is structural, not tunable.** 3-way expert parallelism gives you 2× the KV pool and 2× the concurrency, but halves the DSpark draft model's prediction quality on open text. The draft uses mean-pooled auxiliary hidden states, and with 3-way EP each GPU sees sparser expert routing than under 2-way TP. No in-recipe knob (GPU utilisation, max sequences, MTP depth, sample method, model variant) closes this gap. See [results/RESULTS-2026-08-24.md](results/RESULTS-2026-08-24.md) for the full experiment record.
+**The trade-off is structural in our testing.** 3-way expert parallelism gives you 2× the KV pool and 2× the concurrency, but halves the DSpark draft model's prediction quality on open text. The draft uses mean-pooled auxiliary hidden states, and with 3-way EP each GPU sees sparser expert routing than under 2-way TP. We did not find an in-recipe knob (GPU utilisation, max sequences, MTP depth, sample method, model variant) that closes this gap — your results may vary.
 
 This recipe stands on [Anemll](https://github.com/Anemll/dspark-vllm-gx10),
 [MiaAI-Lab's 2× runbook](https://github.com/MiaAI-Lab/DeepSeek-v4-Flash-DSpark-2x-DGX-Spark),
