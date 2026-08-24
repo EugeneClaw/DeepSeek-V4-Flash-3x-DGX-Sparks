@@ -1,23 +1,31 @@
 # DeepSeek-V4-Flash on 3× DGX Spark
 
 Serve **DeepSeek-V4-Flash-0731** across three NVIDIA DGX Sparks with a
-pairwise ConnectX-7 triangle, expert parallel, and DSpark speculative
-decoding.
+pairwise ConnectX-7 triangle, expert parallel, and DSpark speculative decoding.
+
+> **This fork** extends the FlyCockpit 3× recipe with:
+> - API-key authentication (single + multi-key, with log redaction)
+> - Fail-fast hotfix validation (exit 1 on missing patches, not silent continue)
+> - Performance backports from upstream vLLM PRs (#50004, #50298, #50312, #48957, #49486, #48407)
+> - `GPU_MEMORY_UTILIZATION=0.87` tested and recommended (+13% MTP acceptance vs 0.835)
+> - First published prose benchmark for the 3× configuration
+> - Honest comparison vs Mia 2× recipe (see "Which recipe should I use?" below)
+
+See [CHANGELOG.md](CHANGELOG.md) and [results/RESULTS-2026-08-24.md](results/RESULTS-2026-08-24.md) for details.
 
 This is a consumer runbook, not an official NVIDIA or DeepSeek product.
 The git repo is the maintained surface — no hosted binaries.
 
 | | 2× Spark (RoCE, Mia recipe) | **This 3× recipe** |
 |---|---:|---:|
-| Decode (single stream, 300–8k prompt) | ~81 tok/s | **~85 tok/s** |
-| KV pool | ~2.53M tokens | **4.91M tokens** |
-| Concurrency @ 1M | ~2.4× | **4.68×** |
-| Warm prefill @ 2k / 8k | ~1.0k / ~1.0k tok/s | **~970 / ~980 tok/s** |
+| Decode (single stream, 300–8k prompt) | ~81 tok/s | **~85 tok/s** (original) / **~99 tok/s** (tested, util=0.87) |
+| KV pool | ~2.53M tokens | **4.91M tokens** (original) / **~5.0M** (tested) |
+| Concurrency @ 1M | ~2.4× | **4.68×** (original) / **4.78×** (tested) |
+| Warm prefill @ 2k / 8k | ~1.0k / ~1.0k tok/s | **~970 / ~980 tok/s** (original) / **~1,425 / ~1,579** (tested) |
 | Per-request ceiling | 1,048,576 | 1,048,576 |
 
-Numbers are one-stream, `temperature=0`, thinking off, MTP=5, measured
-2026-08-14 on GB10 / Anemll `0.1.1`. Method and negatives:
-[results/RESULTS.md](results/RESULTS.md).
+Original recipe numbers measured 2026-08-14 on GB10 / Anemll 0.1.1.
+Tested configuration numbers from 2026-08-24: [results/RESULTS-2026-08-24.md](results/RESULTS-2026-08-24.md). Original recipe numbers: [results/RESULTS.md](results/RESULTS.md).
 
 You do **not** get 3× the 2× KV. Tensor-parallel MLA keeps a full KV
 copy on every rank; the third box holds an expert-parallel shard plus a
@@ -147,6 +155,13 @@ Maximum concurrency for 1,048,576 tokens per request: 4.68x
 
 API: `http://NODE0_IP:8888/v1`. For head-only tests set
 `VLLM_HOST=127.0.0.1`.
+
+> ⚠️ **Security warning:** The default `VLLM_HOST=0.0.0.0` with no API key
+> exposes an unauthenticated inference server. **Do not expose port 8888
+> to the Internet.** This recipe is designed for a trusted LAN. API
+> authentication (when configured) does not protect all endpoints
+> (`/metrics`, `/health`, `/tokenize` remain keyless). Use network-level
+> access control (firewall, VLAN, or bind to `127.0.0.1`).
 
 Day-to-day: `./status.sh`, `./logs.sh`, `./stop.sh`.
 
@@ -375,6 +390,21 @@ hit while building this:
 | [results/RESULTS.md](results/RESULTS.md) | Dated benches and dead ends |
 
 ---
+
+## Security / exposure model
+
+This recipe is designed for a **trusted LAN** (private network behind a
+firewall). The default configuration serves on `0.0.0.0:8888` without
+authentication. Optional API-key support (`VLLM_API_KEY` /
+`DSPARK_API_KEYS`) guards `/v1`, `/v2`, and `/inference` routes only —
+other endpoints (`/metrics`, `/health`, `/tokenize`, `/detokenize`)
+remain keyless.
+
+**Do not expose this server to the public Internet** without
+network-level access control (firewall rules, VLAN isolation, or
+binding to `127.0.0.1`). The recipe builds no hosted binaries; all
+images and plugins are compiled locally from source.
+
 
 ## License and credits
 
